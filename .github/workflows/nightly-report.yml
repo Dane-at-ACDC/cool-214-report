@@ -1,0 +1,42 @@
+name: Nightly NYC Cool 214 Report
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    # GitHub cron runs in UTC.
+    # 10 PM Eastern is 2 AM UTC during daylight saving time
+    # and 3 AM UTC during standard time.
+    # The Python script checks Eastern time and only sends at 10 PM ET.
+    - cron: "0 2 * * *"
+
+jobs:
+  send-report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run report
+        env:
+          ARCGIS_USERNAME: ${{ secrets.ARCGIS_USERNAME }}
+          ARCGIS_PASSWORD: ${{ secrets.ARCGIS_PASSWORD }}
+
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
+
+          ENFORCE_10PM_ET: "true"
+        run: python scripts/send_daily_214_report.py
