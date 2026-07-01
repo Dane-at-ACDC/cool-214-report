@@ -2,13 +2,19 @@ name: Nightly NYC Cool 214 Report
 
 on:
   workflow_dispatch:
+    inputs:
+      enforce_10pm_et:
+        description: "Only send if it is currently 10 PM Eastern?"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
   schedule:
-    # GitHub cron runs in UTC.
-    # 10 PM Eastern is 2 AM UTC during daylight saving time
-    # and 3 AM UTC during standard time.
-    # The Python script checks Eastern time and only sends at 10 PM ET.
     - cron: "0 2 * * *"
+    - cron: "0 3 * * *"
 
 jobs:
   send-report:
@@ -38,5 +44,5 @@ jobs:
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
 
-          ENFORCE_10PM_ET: "true"
+          ENFORCE_10PM_ET: ${{ github.event_name == 'schedule' && 'true' || github.event.inputs.enforce_10pm_et }}
         run: python scripts/send_daily_214_report.py
