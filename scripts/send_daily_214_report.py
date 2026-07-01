@@ -30,6 +30,31 @@ def should_run_now():
     return now_et.hour == 22
 
 
+def convert_arcgis_dates_to_eastern(df):
+    """
+    Converts ArcGIS UTC date/time fields to Eastern Time for Excel output.
+    """
+
+    date_fields = [
+        "CreationDate",
+        "created_date",
+        "createddate",
+        "EditDate",
+        "editdate",
+        "last_edited_date",
+    ]
+
+    date_field_lookup = {field.lower() for field in date_fields}
+
+    for col in df.columns:
+        if col.lower() in date_field_lookup:
+            df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
+            df[col] = df[col].dt.tz_convert(EASTERN)
+            df[col] = df[col].dt.strftime("%Y-%m-%d %I:%M %p %Z")
+
+    return df
+
+
 def connect_arcgis():
     gis = GIS(
         ARCGIS_URL,
@@ -109,9 +134,13 @@ def pull_all_records(layer):
         status("No records found.")
         return df
 
+    df = convert_arcgis_dates_to_eastern(df)
+
     # Convert geometry to text if present so Excel export is cleaner.
     if "SHAPE" in df.columns:
-        df["SHAPE_JSON"] = df["SHAPE"].apply(lambda x: json.dumps(x) if x is not None else None)
+        df["SHAPE_JSON"] = df["SHAPE"].apply(
+            lambda x: json.dumps(x) if x is not None else None
+        )
         df = df.drop(columns=["SHAPE"])
 
     status(f"Pulled {len(df)} record(s).")
@@ -170,7 +199,7 @@ def send_email_with_attachment(file_path, record_count):
             "body": {
                 "contentType": "Text",
                 "content": (
-                    f"Attached is the Individual Daily Activity Report 214 - NYC Cool export.\n\n"
+                    "Attached is the Individual Daily Activity Report 214 - NYC Cool export.\n\n"
                     f"Record count: {record_count}\n"
                     f"Generated: {datetime.now(EASTERN):%Y-%m-%d %I:%M %p %Z}"
                 ),
@@ -211,7 +240,7 @@ def main():
     status("Script started.")
 
     try:
-        # Prevent duplicate sends because GitHub runs both 2 AM and 3 AM UTC.
+        # Prevent duplicate sends because GitHub runs both possible UTC hours.
         if os.environ.get("ENFORCE_10PM_ET", "true").lower() == "true":
             if not should_run_now():
                 status("Not 10 PM Eastern. Exiting without sending.")
