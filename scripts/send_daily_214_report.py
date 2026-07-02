@@ -2,7 +2,7 @@ import os
 import json
 import base64
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -16,25 +16,45 @@ SURVEY_NAME_OR_ID = "Individual Daily Activity Report 214 - NYC Cool"
 OUTPUT_FILE = "Individual_Daily_Activity_Report_214_NYC_Cool.xlsx"
 EASTERN = ZoneInfo("America/New_York")
 
+# Field used to determine "current day"
+FILTER_DATE_FIELD = "EditDate"
+
 
 def status(message):
     print(f"[{datetime.now(EASTERN):%Y-%m-%d %H:%M:%S %Z}] {message}")
 
 
 def should_run_now():
-    """
-    GitHub cron runs in UTC and does not handle Eastern DST automatically.
-    Workflow runs at both possible UTC hours, and this prevents duplicate emails.
-    """
     now_et = datetime.now(EASTERN)
     return now_et.hour == 22
 
 
-def convert_arcgis_dates_to_eastern(df):
+def get_today_utc_where_clause():
     """
-    Converts ArcGIS UTC date/time fields to Eastern Time for Excel output.
+    Builds an ArcGIS SQL where clause for records edited today in Eastern Time.
+    ArcGIS date fields are stored/queryable in UTC.
     """
 
+    now_et = datetime.now(EASTERN)
+
+    start_et = now_et.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_et = start_et + timedelta(days=1)
+
+    start_utc = start_et.astimezone(timezone.utc)
+    end_utc = end_et.astimezone(timezone.utc)
+
+    start_sql = start_utc.strftime("%Y-%m-%d %H:%M:%S")
+    end_sql = end_utc.strftime("%Y-%m-%d %H:%M:%S")
+
+    where = (
+        f"{FILTER_DATE_FIELD} >= TIMESTAMP '{start_sql}' "
+        f"AND {FILTER_DATE_FIELD} < TIMESTAMP '{end_sql}'"
+    )
+
+    return where
+
+
+def convert_arcgis_dates_to_eastern(df):
     date_fields = [
         "CreationDate",
         "created_date",
@@ -118,11 +138,13 @@ def get_feature_layer(survey_item):
     return layer
 
 
-def pull_all_records(layer):
-    status("Pulling all survey records...")
+def pull_today_records(layer):
+    where_clause = get_today_utc_where_clause()
+
+    status(f"Querying today's records using: {where_clause}")
 
     features = layer.query(
-        where="1=1",
+        where=where_clause,
         out_fields="*",
         return_geometry=True,
         return_all_records=True
@@ -131,19 +153,18 @@ def pull_all_records(layer):
     df = features.sdf
 
     if df.empty:
-        status("No records found.")
+        status("No records found for today.")
         return df
 
     df = convert_arcgis_dates_to_eastern(df)
 
-    # Convert geometry to text if present so Excel export is cleaner.
     if "SHAPE" in df.columns:
         df["SHAPE_JSON"] = df["SHAPE"].apply(
             lambda x: json.dumps(x) if x is not None else None
         )
         df = df.drop(columns=["SHAPE"])
 
-    status(f"Pulled {len(df)} record(s).")
+    status(f"Pulled {len(df)} record(s) for today.")
     return df
 
 
@@ -240,7 +261,6 @@ def main():
     status("Script started.")
 
     try:
-        # Prevent duplicate sends because GitHub runs both possible UTC hours.
         if os.environ.get("ENFORCE_10PM_ET", "true").lower() == "true":
             if not should_run_now():
                 status("Not 10 PM Eastern. Exiting without sending.")
@@ -250,7 +270,7 @@ def main():
         survey_item = find_survey_item(gis)
         layer = get_feature_layer(survey_item)
 
-        df = pull_all_records(layer)
+        df = pull_today_records(layer)
 
         if df.empty:
             status("No records to email.")
